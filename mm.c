@@ -1,12 +1,21 @@
-#include "mm.h"
-#include "memlib.h"
-#include "list.h"
-#include "tree.h"
-#include "queue.h"
+/*
+ * Simple, 32-bit and 64-bit clean allocator based on implicit free
+ * lists, first fit placement, and boundary tag coalescing, as described
+ * in the CS:APP2e text. Blocks must be aligned to doubleword (8 byte)
+ * boundaries. Minimum block size is 16 bytes.
+ */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
+#include "mm.h"
+#include "memlib.h"
+#include "list.h"
+
+/*
+ * If NEXT_FIT defined use next fit search, else use first fit search
+ */
+#define NEXT_FITx
 
 /* $begin mallocmacros */
 /* Basic constants and macros */
@@ -36,137 +45,298 @@
 #define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) //line:vm:mm:prevblkp
 /* $end mallocmacros */
 
-
-/* struct block representing a free block */
-struct block {
-    struct list_elem elem;
-    int index;
-    size_t size;
-};
-
-
 /* Global variables */
-static char *heap_listp = 0;  /* Pointer to first block */
-struct list freeBlocks;
-int mm_init () {
+static char *heap_listp = 0;    /* Pointer to first block */
+#ifdef NEXT_FIT
+static char *rover;           /* Next fit rover */
+#endif
+typedef struct block block;
 
-    /* Initialized free block list
-    list_init(&freeBlocks);*/
+struct block
+{
+  short alloc;
+  short size;
+  //long padding;
+  struct list_elem element;
+};
+/* Function prototypes for internal helper routines */
+static void coalesce(block *b);
+struct list * getListAt(int asize);
+static int getIndex(int asize);
+static void *freeBlockStart(block *b);
+static void *blockHeader(block *b);
+static block* findBuddy(block* bp);
+
+team_t team = {"Allocators", "Broulaye Doumbia", "broulaye", "Peter Maurer", "pdman13"};
 
 
+
+struct list freeBlock8;
+struct list freeBlock16;
+struct list freeBlock32;
+struct list freeBlock64;
+struct list freeBlock128;
+struct list freeBlock256;
+struct list freeBlock512;
+struct list freeBlock1024;
+static block *initialBlock;
+//struct list freeBlock2048;
+/*
+ * mm_init - Initialize the memory manager
+ */
+/* $begin mminit */
+int mm_init(void)
+{
     /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1) //line:vm:mm:begininit
+    if ((heap_listp = mem_sbrk(CHUNKSIZE/WSIZE)) == (void *)-1) //line:vm:mm:begininit
 	return -1;
-    PUT(heap_listp, 0);                          /* Alignment padding */
-    PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); /* Prologue header */
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
-    PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
-    heap_listp += (2*WSIZE);                     //line:vm:mm:endinit
-
-    /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
-        return -1;
-
-
-    /* Create a block
-    struct block newBlock;
-    newBlock.index = heap_listp;
-    newBlock.size = GET_SIZE(HDRP(heap_listp));*/
-
-    /* Populate free block list */
-    //list_push_back(&freeBlocks, &newBlock.elem);
+	list_init(&freeBlock8);
+	list_init(&freeBlock16);
+	list_init(&freeBlock32);
+	list_init(&freeBlock64);
+	list_init(&freeBlock128);
+	list_init(&freeBlock256);
+	list_init(&freeBlock512);
+	list_init(&freeBlock1024);
+	initialBlock = (block *) heap_listp;
+	initialBlock->alloc = 0;
+	initialBlock->size = (CHUNKSIZE/WSIZE);
+	list_push_back(&freeBlock1024, &initialBlock->element);
 
     return 0;
+}
+/* $end mminit */
+
+/*
+ * mm_malloc - Allocate a block with at least size bytes of payload
+ */
+/* $begin mmmalloc */
+void *mm_malloc(size_t size)
+{
+    size_t asize = size + sizeof(block);      /* Adjusted block size */
+
+/* $end mmmalloc */
+    if (heap_listp == 0){
+        mm_init();
+    }
+/* $begin mmmalloc */
+    /* Ignore spurious requests */
+    if (size == 0)
+	return NULL;
+
+    /* Adjust block size to include overhead and alignment reqs.
+    if (size <= DSIZE)
+	asize = 2*DSIZE;
+    else
+	asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); */
+
+	if(asize > ((CHUNKSIZE/WSIZE))) {
+        return NULL;
+	}
+    int index = getIndex(asize);
+    struct list *tempList;
+    //list_init(&tempList);
+    tempList = getListAt(index);
+
+    block *allocBlock;
+
+    if(!list_empty(tempList)) {
+        allocBlock = (block *)list_pop_back(tempList);
+        allocBlock->alloc = 1;
+
+        return freeBlockStart(allocBlock);
+    }
+
+    while(list_empty(tempList) && index < 8) {
+        index++;
+        tempList = getListAt(index);
+    }
+
+    if(index == 8) {
+        block *newBlock;
+        if((newBlock = mem_sbrk(CHUNKSIZE/WSIZE)) == (void *)-1) {
+            return (void *)-1;
+        }
+
+        newBlock->alloc = 0;
+        newBlock->size = 1024;
+        list_push_back(&freeBlock1024, &newBlock->element);
+        index--;
+
+    }
+
+    block *currentBlock;
+    block *newBlock;
+
+    int goal = getIndex(asize);
+    while(index != goal) {
+        tempList = getListAt(index);
+        currentBlock = (block *)list_pop_front(tempList);
+        currentBlock->size = currentBlock->size/2;
 
 
+        newBlock = (block *) ((char *) currentBlock + currentBlock->size);
+        newBlock->size = currentBlock->size;
+
+        index--;
+
+        tempList = getListAt(index);
+
+        list_push_back(tempList, &currentBlock->element);
+        list_push_back(tempList, &newBlock->element);
+
+    }
+
+    block *result = (block *)list_pop_front(tempList);
+
+    return freeBlockStart(result);
 }
 
-void *mm_malloc (size_t size) {
 
+struct list * getListAt(int index) {
+  switch(index) {
+    case 0:
+        return &freeBlock8;
+    case 1:
+        return &freeBlock16;
+    case 2:
+        return &freeBlock32;
+    case 3:
+        return &freeBlock64;
+    case 4:
+        return &freeBlock128;
+    case 5:
+        return &freeBlock256;
+    case 6:
+        return &freeBlock512;
+    default:
+        return &freeBlock1024;
+  }
 }
-void mm_free (void *ptr) {
-    /* $end mmfree */
+
+int getIndex(int asize) {
+    int index = 0;
+    int size = 8;
+    while (size < asize) {
+        size *= 2;
+        index++;
+    }
+    return index;
+}
+
+void *freeBlockStart(block *b) {
+    char *Bptr = (char *)b;
+    return Bptr + sizeof(block);
+}
+
+void *blockHeader(block *b) {
+    char *Bptr = (char *)b;
+    return Bptr - sizeof(block);
+}
+
+
+/* $end mmmalloc */
+
+/*
+ * mm_free - Free a block
+ */
+/* $begin mmfree */
+void mm_free(void *bp)
+{
+/* $end mmfree */
     if(bp == 0)
 	return;
 
+
+
 /* $begin mmfree */
-    size_t size = GET_SIZE(HDRP(bp));
+    //size_t size = GET_SIZE(HDRP(bp));
 /* $end mmfree */
     if (heap_listp == 0){
-	mm_init();
+        mm_init();
     }
-/* $begin mmfree */
 
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
-    coalesce(bp);
-}
-void *mm_realloc(void *ptr, size_t size) {
 
-}
+    block *b = blockHeader(bp);
+    b->alloc = 0;
 
-static void *extend_heap(size_t words)
-{
-    char *bp;
-    size_t size;
+    coalesce(b);
 
-    /* Allocate an even number of words to maintain alignment */
-    size = (words % 2) ? (words+1) * WSIZE : words * WSIZE; //line:vm:mm:beginextend
-    if ((long)(bp = mem_sbrk(size)) == -1)
-	return NULL;                                        //line:vm:mm:endextend
-
-    /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0));         /* Free block header */   //line:vm:mm:freeblockhdr
-    PUT(FTRP(bp), PACK(size, 0));         /* Free block footer */   //line:vm:mm:freeblockftr
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */ //line:vm:mm:newepihdr
-
-    /* Coalesce if the previous block was free */
-    return coalesce(bp);                                          //line:vm:mm:returnblock
 }
 
+
+block* findBuddy(block* bp){
+  int buddy = (int) bp ^ bp->size;
+  block *b = (block *) buddy;
+  if (bp->size == b->size) return b;
+  else return NULL;
+}
+
+/* $end mmfree */
 /*
  * coalesce - Boundary tag coalescing. Return ptr to coalesced block
  */
 /* $begin mmfree */
-static void *coalesce(void *bp)
+static void coalesce(block *b)
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
+    block *buddy = findBuddy(b);
 
-    if (prev_alloc && next_alloc) {            /* Case 1 */
-	return bp;
+    while(buddy && (buddy->alloc == 0)){
+        list_remove(&buddy->element);
+
+        if(buddy < b) {
+            b = buddy;
+        }
+
+        b->size = b->size * 2;
+        buddy = findBuddy(b);
     }
 
-    else if (prev_alloc && !next_alloc) {      /* Case 2 */
-	size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-	PUT(HDRP(bp), PACK(size, 0));
-	PUT(FTRP(bp), PACK(size,0));
-    }
+    int index = getIndex(b->size);
+    struct list * tempList;
+    //list_init(&tempList);
+    tempList = getListAt(index);
 
-    else if (!prev_alloc && next_alloc) {      /* Case 3 */
-	size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-	PUT(FTRP(bp), PACK(size, 0));
-	PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-	bp = PREV_BLKP(bp);
-    }
-
-    else {                                     /* Case 4 */
-	size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
-	    GET_SIZE(FTRP(NEXT_BLKP(bp)));
-	PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-	PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-	bp = PREV_BLKP(bp);
-    }
+    list_push_back(tempList, &b->element);
+}
 /* $end mmfree */
-#ifdef NEXT_FIT
-    /* Make sure the rover isn't pointing into the free block */
-    /* that we just coalesced */
-    if ((rover > (char *)bp) && (rover < NEXT_BLKP(bp)))
-	rover = bp;
-#endif
-/* $begin mmfree */
-    return bp;
+
+/*
+ * mm_realloc - Naive implementation of realloc
+ */
+void *mm_realloc(void *ptr, size_t size)
+{
+    size_t oldsize;
+    void *newptr;
+
+    /* If size == 0 then this is just free, and we return NULL. */
+    if(size == 0) {
+	mm_free(ptr);
+	return 0;
+    }
+
+    /* If oldptr is NULL, then this is just malloc. */
+    if(ptr == NULL) {
+	return mm_malloc(size);
+    }
+
+    newptr = mm_malloc(size);
+
+    /* If realloc() fails the original block is left untouched  */
+    if(!newptr) {
+	return 0;
+    }
+
+    /* Copy the old data. */
+    block *b = blockHeader(ptr);
+    oldsize = b->size;
+    if(size < oldsize) oldsize = size;
+    memcpy(newptr, ptr, oldsize- sizeof(block));
+
+    /* Free the old block. */
+    mm_free(ptr);
+
+    return newptr;
 }
 
 
