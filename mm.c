@@ -12,6 +12,7 @@
 /* Basic constants and macros */
 #define WSIZE       4       /* Word and header/footer size (bytes) */ //line:vm:mm:beginconst
 #define DSIZE       8       /* Doubleword size (bytes) */
+#define BLOCK_SZ_WRDS 8;
 #define CHUNKSIZE  (1<<12)  /* Extend heap by this amount (bytes) */  //line:vm:mm:endconst
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
@@ -37,14 +38,46 @@
 /* $end mallocmacros */
 
 
+struct bound { 
+	int alocd:1;
+	int size:31;
+}
+
 /* struct block representing a free block */
 struct block {
-    struct list_elem elem;
-    int index;
-    size_t size;
+    struct bound head;
+    union {
+        struct list_elem elem;
+        int index;
+        size_t size;
+	char data[0];
+    };
 };
 
 
+static size_t convert_bytes_to_words(size_t b) {
+	b = (b + DSIZE - 1) & ~(DSIZE - 1);
+	b += 2 * sizeof(struct bound);
+	return MAX(BLOCK_SZ_WRDS, bytes/WSIZE);
+}
+
+static struct block * find_free(size_t word_size) {
+	//search through the list to find a free block
+}
+
+static struct block * format(struct block *block_p, size_t word_count) {
+	size_t block_size = block_p->head.size;
+
+	if (block_size > word_count && (block_size - word_count) >= BLOCK_SZ_WRDS) {
+		printf("split necessary\n");
+		mark_alloc(block_p, block_size); // Still need to implement
+		mark_free(/*next block */, block_size - word_count);
+	} else {
+		// no split, use whoe block
+		mark_alloc(block_p, block_size);
+	}
+	return block_p;
+}
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */
 struct list freeBlocks;
@@ -81,8 +114,19 @@ int mm_init () {
 
 }
 
-void *mm_malloc (size_t size) {
 
+void *mm_malloc (size_t size) {
+	size_t word_size; // size adjusted into words
+	struct block *block_p; // pointer to block to return
+
+	if (size == 0) return NULL;
+
+	word_size = convert_bytes_to_words(size);
+
+	block_p = find_free(word_size);
+	format(block_p, word_size); // set up block to be returnable, split if necessary
+
+	return block_p->data;
 }
 void mm_free (void *ptr) {
     /* $end mmfree */
