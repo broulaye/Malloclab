@@ -12,7 +12,7 @@
 /* Basic constants and macros */
 #define WSIZE       4       /* Word and header/footer size (bytes) */ //line:vm:mm:beginconst
 #define DSIZE       8       /* Doubleword size (bytes) */
-#define BLOCK_SZ_WRDS 8;
+#define BLOCK_SZ_WRDS 8
 #define CHUNKSIZE  (1<<12)  /* Extend heap by this amount (bytes) */  //line:vm:mm:endconst
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
@@ -41,16 +41,14 @@
 struct bound { 
 	int alocd:1;
 	int size:31;
-}
+};
 
 /* struct block representing a free block */
 struct block {
     struct bound head;
     union {
-        struct list_elem elem;
-        int index;
-        size_t size;
 	char data[0];
+        struct list_elem elem;
     };
 };
 
@@ -58,7 +56,13 @@ struct block {
 static size_t convert_bytes_to_words(size_t b) {
 	b = (b + DSIZE - 1) & ~(DSIZE - 1);
 	b += 2 * sizeof(struct bound);
-	return MAX(BLOCK_SZ_WRDS, bytes/WSIZE);
+	return MAX(BLOCK_SZ_WRDS, b/WSIZE);
+}
+
+static void mark_alloc(struct block *block_p, size_t block_size) {
+	block_p->head.alocd = 1;
+	block_p->head.size = block_size;
+//	(void *) ((size_t *)block_p + block_p->head.size - sizeof(struct bound)) = block_p->head;
 }
 
 static struct block * find_free(size_t word_size) {
@@ -128,7 +132,7 @@ void *mm_malloc (size_t size) {
 
 	return block_p->data;
 }
-void mm_free (void *ptr) {
+void mm_free (void *bp) {
     /* $end mmfree */
     if(bp == 0)
 	return;
