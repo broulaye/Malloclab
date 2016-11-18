@@ -45,41 +45,49 @@
 #define PREV_BLKP(bp)  ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) //line:vm:mm:prevblkp
 /* $end mallocmacros */
 
-/* Global variables */
-static char *heap_listp = 0;    /* Pointer to first block */
+
 #ifdef NEXT_FIT
 static char *rover;           /* Next fit rover */
 #endif
-typedef struct block block;
 
-struct block
-{
-  short alloc;
-  short size;
-  //long padding;
-  struct list_elem element;
-};
+
+
+
+ struct bound {
+ 	size_t alocd:1;
+ 	size_t size:31;
+ };
+
+ /* struct block representing a free block */
+ typedef struct block {
+     struct bound head;
+     union {
+        struct list_elem element;
+        char * data[0];
+     };
+ }block;
+
 /* Function prototypes for internal helper routines */
 static void coalesce(block *b);
-struct list * getListAt(int asize);
-static int getIndex(int asize);
+//struct list * getListAt(int asize);
+static size_t getIndex(size_t asize);
 static void *freeBlockStart(block *b);
-static void *blockHeader(block *b);
+static block *blockHeader(block *b);
 static block* findBuddy(block* bp);
+static void findFreeBlock(block *elem, struct list *tempList, bool found, size_t asize);
+static void findNextBiggest(block *elem, struct list *tempList, bool found, size_t asize);
+static size_t breakDown(size_t goal, block *elem, size_t index);
+static size_t getListSize(size_t index);
 
 team_t team = {"Allocators", "Broulaye Doumbia", "broulaye", "Peter Maurer", "pdman13"};
 
 
 
-struct list freeBlock8;
-struct list freeBlock16;
-struct list freeBlock32;
-struct list freeBlock64;
-struct list freeBlock128;
-struct list freeBlock256;
-struct list freeBlock512;
-struct list freeBlock1024;
+struct list freeBlockList[11];/** 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192-INFINITY */
 static block *initialBlock;
+//static block *prologueBlock;
+//static block *epilogueBlock;
+static void *heap_listp = 0;    /* Pointer to first block */
 //struct list freeBlock2048;
 /*
  * mm_init - Initialize the memory manager
@@ -87,21 +95,28 @@ static block *initialBlock;
 /* $begin mminit */
 int mm_init(void)
 {
+
+//    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1) //line:vm:mm:begininit
+//        return -1;
+//
+//    PUT(heap_listp, 0); //padding
+//    prologueBlock = (block *) heap_listp+WSIZE;
+//    prologueBlock->head.alocd = 1;
+//    prologueBlock->head.size = DSIZE;
+
+
+
     /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(CHUNKSIZE/WSIZE)) == (void *)-1) //line:vm:mm:begininit
+    if ((heap_listp = mem_sbrk(4096)) == (void *)-1) //line:vm:mm:begininit
 	return -1;
-	list_init(&freeBlock8);
-	list_init(&freeBlock16);
-	list_init(&freeBlock32);
-	list_init(&freeBlock64);
-	list_init(&freeBlock128);
-	list_init(&freeBlock256);
-	list_init(&freeBlock512);
-	list_init(&freeBlock1024);
+
+	for(int i= 0; i < 11; i++) {
+        list_init(&freeBlockList[i]);
+	}
 	initialBlock = (block *) heap_listp;
-	initialBlock->alloc = 0;
-	initialBlock->size = (CHUNKSIZE/WSIZE);
-	list_push_back(&freeBlock1024, &initialBlock->element);
+	initialBlock->head.alocd = 0;
+	initialBlock->head.size = (4096);
+	list_push_back(&freeBlockList[9], &initialBlock->element);
 
     return 0;
 }
@@ -113,7 +128,15 @@ int mm_init(void)
 /* $begin mmmalloc */
 void *mm_malloc(size_t size)
 {
-    size_t asize = size + sizeof(block);      /* Adjusted block size */
+    /**(size+8-1) &~ (8-1)*/
+
+    size_t asize = size + 8 ;      /* Adjusted block size */
+
+    while(asize%8 != 0) {
+        asize++;
+    }
+
+
 
 /* $end mmmalloc */
     if (heap_listp == 0){
@@ -130,94 +153,261 @@ void *mm_malloc(size_t size)
     else
 	asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); */
 
+	/**
 	if(asize > ((CHUNKSIZE/WSIZE))) {
         return NULL;
-	}
-    int index = getIndex(asize);
+	}*/
+
+    size_t index = getIndex(asize);
     struct list *tempList;
     //list_init(&tempList);
-    tempList = getListAt(index);
+    tempList = &freeBlockList[index];
 
-    block *allocBlock;
+    block *tempBlock;
 
-    if(!list_empty(tempList)) {
-        allocBlock = (block *)list_pop_back(tempList);
-        allocBlock->alloc = 1;
+    if(!list_empty(tempList) && index < 10) {
+        tempBlock = list_entry(list_pop_back(tempList), block, element);
+        tempBlock->head.alocd = 1;
 
-        return freeBlockStart(allocBlock);
+        return freeBlockStart(tempBlock);
     }
 
-    while(list_empty(tempList) && index < 8) {
+    while(list_empty(tempList) && index < 10) {
         index++;
-        tempList = getListAt(index);
+        tempList = &freeBlockList[index];
     }
 
-    if(index == 8) {
-        block *newBlock;
-        if((newBlock = mem_sbrk(CHUNKSIZE/WSIZE)) == (void *)-1) {
-            return (void *)-1;
+    if(index == 10) {/**search the last range block*/
+        if(!list_empty(tempList)) {
+            bool found = false;
+            tempBlock = list_entry(list_begin(tempList), block, element);
+            findFreeBlock(tempBlock, tempList, found, asize);
+            if(found) {/**found so pop it and use it*/
+                list_remove(&tempBlock->element);
+                //void *header = getHeader(listElem);
+                //PUT(header, PACK(asize, 1));
+                tempBlock->head.alocd = 1;
+                return freeBlockStart(tempBlock);
+            }
+            else {/**else try to find the next biggest*/
+                tempBlock = list_entry(list_begin(tempList), block, element);
+                findNextBiggest(tempBlock, tempList, found, asize);
+                if(found) {/**found so pop it break it down and use it*/
+                    size_t Rindex = breakDown(asize, tempBlock, index);
+                    tempBlock = list_entry(list_pop_back(&freeBlockList[Rindex]), block, element);
+                    //void *header = getHeader(listElem);
+                    //PUT(header, PACK(asize, 1));
+                    tempBlock->head.alocd = 1;
+                    return freeBlockStart(tempBlock);
+                }
+                else {/**Not found we will have to request new memory*/
+                    index++;
+                }
+
+            }
+
         }
+        else {/**last range block is empty*/
+            index++;
+        }
+    }
+    if(index == 11) {
+        block *newBlock;
+        //size_t extendSize = 0;
+        if(asize <= 4096){
 
-        newBlock->alloc = 0;
-        newBlock->size = 1024;
-        list_push_back(&freeBlock1024, &newBlock->element);
-        index--;
+            size_t index = getIndex(asize);
+            size_t sizeToAllocate = getListSize(index) * 2;
+            if(sizeToAllocate < 1024) {
+                sizeToAllocate = 1024;
+            }
+            if((newBlock = mem_sbrk(sizeToAllocate)) == NULL) {/**request new memory if you can*/
+            /**you can't request more memory, try to coalesce*/
+                return NULL;
 
+            }
+            else {
+                //PUT(newBlock, PACK(asize, 1)); /**set header for new block*/
+                //size_t heapSize = mem_heapsize();
+                newBlock->head.alocd = 0;
+                //newBlock->head.size = heapSize;
+                newBlock->head.size = sizeToAllocate;
+                index = getIndex(sizeToAllocate);
+                list_push_back(&freeBlockList[index], &newBlock->element);
+                size_t Rindex = breakDown(asize, newBlock, index);
+                tempBlock = list_entry(list_pop_back(&freeBlockList[Rindex]), block, element);
+                tempBlock->head.alocd = 1;
+                return freeBlockStart(tempBlock);
+            }
+        }
+        else {
+             size_t sizeToAllocate = 8192;
+             while(asize > sizeToAllocate) {
+                sizeToAllocate *= 2;
+             }
+             if((newBlock = mem_sbrk(sizeToAllocate)) == (void *)-1) {/**request new memory if you can*/
+            /**you can't request more memory, try to coalesce*/
+                return (void *)-1;
+
+            }
+            else {
+                //PUT(newBlock, PACK(asize, 1)); /**set header for new block*/
+                size_t Rindex;
+                newBlock->head.alocd = 0;
+                newBlock->head.size = sizeToAllocate;
+                list_push_back(&freeBlockList[10], &newBlock->element);
+                if(asize == sizeToAllocate  || sizeToAllocate/2 < asize ) {
+                    Rindex = 10;
+                }
+                else {
+                    Rindex = breakDown(asize, newBlock, 10);
+                }
+                tempBlock = list_entry(list_pop_back(&freeBlockList[Rindex]), block, element);
+                tempBlock->head.alocd = 1;
+                return freeBlockStart(tempBlock);
+            }
+        }
     }
 
-    block *currentBlock;
-    block *newBlock;
-
-    int goal = getIndex(asize);
-    while(index != goal) {
-        tempList = getListAt(index);
-        currentBlock = (block *)list_pop_front(tempList);
-        currentBlock->size = currentBlock->size/2;
-
-
-        newBlock = (block *) ((char *) currentBlock + currentBlock->size);
-        newBlock->size = currentBlock->size;
-
-        index--;
-
-        tempList = getListAt(index);
-
-        list_push_back(tempList, &currentBlock->element);
-        list_push_back(tempList, &newBlock->element);
-
+    else {
+        tempBlock = list_entry(list_rbegin(tempList), block, element);
+        size_t Rindex = breakDown(asize, tempBlock, index);
+        tempBlock = list_entry(list_pop_back(&freeBlockList[Rindex]), block, element);
+        //void *header = getHeader(listElem);
+        //PUT(header, PACK(asize, 1));
+        tempBlock->head.alocd = 1;
+        return freeBlockStart(tempBlock);
     }
 
-    block *result = (block *)list_pop_front(tempList);
 
-    return freeBlockStart(result);
+}
+
+void findFreeBlock(block *newBlock, struct list *tempList, bool found, size_t asize) {
+    struct list_elem *elem = &newBlock->element;
+    while(elem != list_tail(tempList)){
+        if(newBlock->head.size != asize) {
+            elem = list_next(elem);
+            newBlock = list_entry(elem, block, element);
+        }
+        else {
+            found = true;
+            break;
+        }
+    }
+}
+
+void findNextBiggest(block *newBlock, struct list *tempList, bool found, size_t asize) {
+    struct list_elem *elem = &newBlock->element;
+    while( elem != list_tail(tempList)){
+        if(newBlock->head.size < asize) {
+            elem = list_next(elem);
+            newBlock = list_entry(elem, block, element);
+        }
+        else {
+            found = true;
+            break;
+        }
+    }
 }
 
 
-struct list * getListAt(int index) {
+size_t breakDown(size_t goal, block *Block, size_t index) {
+    size_t Currentsize = Block->head.size; /**get size of current block*/
+
+    if(Currentsize/2 < goal) {
+        list_remove(&Block->element); /**remove the current block from it's list*/
+        list_push_back(&freeBlockList[index], &Block->element);
+        return index;
+    }
+
+    while(Currentsize > 4096) {
+
+        list_remove(&Block->element); /**remove the current block from it's list*/
+        Currentsize /= 2;/**half the size of the current free block*/
+
+        Block->head.size = Currentsize;
+
+        block *newBlock = (block *)(((char *)Block) + Currentsize); /**create a new block at size offset from current block*/
+        newBlock->head.size = Currentsize;
+        newBlock->head.alocd = 0;
+
+        if(Currentsize > 4096) { /**current size still greater than 4096*/
+            list_push_back(&freeBlockList[10], &Block->element);
+            list_push_back(&freeBlockList[10], &newBlock->element);
+            if(Currentsize >= goal && (Currentsize/2) < goal) {
+                return 10;
+            }
+        }
+        else { /**Current size not greater than 4096*/
+            list_push_back(&freeBlockList[9], &Block->element);
+            list_push_back(&freeBlockList[9], &newBlock->element);
+            index = 9;
+            if(Currentsize == goal || Currentsize/2 < goal) {
+                return 9;
+            }
+        }
+
+    }
+
+    size_t indexGoal = getIndex(goal);
+    while(index != indexGoal) {
+        Block = list_entry(list_pop_back(&freeBlockList[index]), block, element);
+        Currentsize = Block->head.size; /**get size of current block*/
+
+        Currentsize /= 2; /**half the size of the current free block*/
+
+        Block->head.size = Currentsize;
+
+        block *newBlock = (block *)(((char *)Block) + Currentsize); /**create a new block at size offset from current block*/
+        newBlock->head.size = Currentsize;
+        newBlock->head.alocd = 0;
+
+        index--;
+
+        /**push it into a smaller list*/
+        list_push_back(&freeBlockList[index], &Block->element);
+        list_push_back(&freeBlockList[index], &newBlock->element);
+
+
+    }
+
+    return index;
+
+}
+
+
+
+
+
+size_t getListSize(size_t index) {
   switch(index) {
     case 0:
-        return &freeBlock8;
+        return 8;
     case 1:
-        return &freeBlock16;
+        return 16;
     case 2:
-        return &freeBlock32;
+        return 32;
     case 3:
-        return &freeBlock64;
+        return 64;
     case 4:
-        return &freeBlock128;
+        return 128;
     case 5:
-        return &freeBlock256;
+        return 256;
     case 6:
-        return &freeBlock512;
+        return 512;
+    case 7:
+        return 1024;
+    case 8:
+        return 2048;
     default:
-        return &freeBlock1024;
+        return 4096;
   }
 }
 
-int getIndex(int asize) {
-    int index = 0;
-    int size = 8;
-    while (size < asize) {
+size_t getIndex(size_t asize) {
+    size_t index = 0;
+    size_t size = 8;
+    while (size < asize && index < 10) {
         size *= 2;
         index++;
     }
@@ -225,13 +415,14 @@ int getIndex(int asize) {
 }
 
 void *freeBlockStart(block *b) {
-    char *Bptr = (char *)b;
-    return Bptr + sizeof(block);
+    //char *Bptr = (char *)b;
+    return (void *)((char *)b->data + 4);
 }
 
-void *blockHeader(block *b) {
+
+block *blockHeader(block *b) {
     char *Bptr = (char *)b;
-    return Bptr - sizeof(block);
+    return (block *)(Bptr - 8);
 }
 
 
@@ -258,7 +449,11 @@ void mm_free(void *bp)
 
 
     block *b = blockHeader(bp);
-    b->alloc = 0;
+    if(b->head.alocd == 0) {
+        printf("Calling free on an already free pointer\n");
+        return;
+    }
+    b->head.alocd = 0;
 
     coalesce(b);
 
@@ -266,9 +461,13 @@ void mm_free(void *bp)
 
 
 block* findBuddy(block* bp){
-  int buddy = (int) bp ^ bp->size;
+  int buddy = (int) bp ^ bp->head.size;
   block *b = (block *) buddy;
-  if (bp->size == b->size) return b;
+
+  if((char *)b-1 > (char *)mem_heap_hi() || (char *)b-1 < (char *)mem_heap_lo())
+    return NULL;
+
+  if (bp->head.size == b->head.size) return b;
   else return NULL;
 }
 
@@ -281,23 +480,21 @@ static void coalesce(block *b)
 {
     block *buddy = findBuddy(b);
 
-    while(buddy && (buddy->alloc == 0)){
+    while(buddy && (buddy->head.alocd == 0)){
         list_remove(&buddy->element);
 
         if(buddy < b) {
             b = buddy;
         }
 
-        b->size = b->size * 2;
+        b->head.size = b->head.size * 2;
         buddy = findBuddy(b);
     }
 
-    int index = getIndex(b->size);
-    struct list * tempList;
-    //list_init(&tempList);
-    tempList = getListAt(index);
+    int index = getIndex(b->head.size);
 
-    list_push_back(tempList, &b->element);
+
+    list_push_back(&freeBlockList[index], &b->element);
 }
 /* $end mmfree */
 
@@ -307,17 +504,17 @@ static void coalesce(block *b)
 void *mm_realloc(void *ptr, size_t size)
 {
     size_t oldsize;
-    void *newptr;
+    block *newptr;
 
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0) {
-	mm_free(ptr);
-	return 0;
+        mm_free(ptr);
+        return 0;
     }
 
     /* If oldptr is NULL, then this is just malloc. */
     if(ptr == NULL) {
-	return mm_malloc(size);
+        return mm_malloc(size);
     }
 
     newptr = mm_malloc(size);
@@ -329,7 +526,7 @@ void *mm_realloc(void *ptr, size_t size)
 
     /* Copy the old data. */
     block *b = blockHeader(ptr);
-    oldsize = b->size;
+    oldsize = b->head.size;
     if(size < oldsize) oldsize = size;
     memcpy(newptr, ptr, oldsize- sizeof(block));
 
