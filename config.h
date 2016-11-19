@@ -43,8 +43,8 @@
  * to their score.  This deters students from building extremely fast,
  * but extremely stupid malloc packages.
  *
- * gback@cs.vt.edu/spruett3@vt.edu: I set this to a value that is achieved by a r/b 
- * tree-based implementation on our rlogin cluster as of Fall 2015; 
+ * gback@cs.vt.edu/spruett3@vt.edu: I set this to a value that is achieved by a r/b
+ * tree-based implementation on our rlogin cluster as of Fall 2015;
  * regardless of the speed of the actual libc. Updated in Fall 2015.
  *
  * gback: Again updated in Spring 2016 after switching to clock.
@@ -54,20 +54,20 @@
  */
 #define AVG_LIBC_THRUPUT      21.5E6 /* 21,500 Kops/sec */
 
- /* 
+ /*
   * This constant determines the contributions of space utilization
   * (UTIL_WEIGHT) and throughput (1 - UTIL_WEIGHT) to the performance
-  * index.  
+  * index.
   */
 #define UTIL_WEIGHT .60
 
-/* 
- * Alignment requirement in bytes (either 4 or 8) 
+/*
+ * Alignment requirement in bytes (either 4 or 8)
  */
 #define ALIGNMENT 8
 
-/* 
- * Maximum heap size in bytes 
+/*
+ * Maximum heap size in bytes
  */
 #define MAX_HEAP (1024*(1<<20))  /* 1024 MB */
 

@@ -78,6 +78,9 @@ static void findFreeBlock(block *elem, struct list *tempList, bool found, size_t
 static void findNextBiggest(block *elem, struct list *tempList, bool found, size_t asize);
 static size_t breakDown(size_t goal, block *elem, size_t index);
 static size_t getListSize(size_t index);
+static block *getMoreMemory(size_t sizeToAllocate);
+static block *coalesce2(block *b, bool increase);
+//static void* my_memcpy(void* dest, const void* src, size_t num_bytes);
 
 team_t team = {"Allocators", "Broulaye Doumbia", "broulaye", "Peter Maurer", "pdman13"};
 
@@ -217,12 +220,11 @@ void *mm_malloc(size_t size)
         if(asize <= 4096){
 
             size_t index = getIndex(asize);
-            size_t sizeToAllocate = getListSize(index) * 2;
+            size_t sizeToAllocate = getListSize(index);
             if(sizeToAllocate < 1024) {
                 sizeToAllocate = 1024;
             }
             if((newBlock = mem_sbrk(sizeToAllocate)) == NULL) {/**request new memory if you can*/
-            /**you can't request more memory, try to coalesce*/
                 return NULL;
 
             }
@@ -241,13 +243,13 @@ void *mm_malloc(size_t size)
             }
         }
         else {
-             size_t sizeToAllocate = 8192;
-             while(asize > sizeToAllocate) {
-                sizeToAllocate *= 2;
-             }
+             size_t sizeToAllocate = asize;
              if((newBlock = mem_sbrk(sizeToAllocate)) == (void *)-1) {/**request new memory if you can*/
-            /**you can't request more memory, try to coalesce*/
-                return (void *)-1;
+                newBlock = getMoreMemory(asize);
+                if(newBlock == NULL) {
+                    return NULL;
+                }
+                return freeBlockStart(newBlock);
 
             }
             else {
@@ -281,6 +283,55 @@ void *mm_malloc(size_t size)
 
 
 }
+
+
+block *getMoreMemory(size_t sizeToAllocate) {
+
+    size_t index = 0;
+    size_t lenght = list_size(&freeBlockList[10]);
+    block *tempBlock;
+    bool increased = false;
+    while(index < lenght) {
+        tempBlock = list_entry(list_pop_front(&freeBlockList[10]), block, element);
+        tempBlock = coalesce2(tempBlock, increased);
+        if(!increased) {
+            list_push_back(&freeBlockList[10], &tempBlock->element);
+            index++;
+        }
+        else {
+            if(tempBlock->head.size >= sizeToAllocate) {
+                return tempBlock;
+            }
+            else {
+                increased = false;
+                list_push_front(&freeBlockList[10], &tempBlock->element);
+            }
+        }
+    }
+
+    return NULL;
+
+
+}
+
+block *coalesce2(block *b, bool increase)
+{
+    block *buddy = findBuddy(b);
+
+    if(buddy && (buddy->head.alocd == 0)){
+        list_remove(&buddy->element);
+
+        b->head.size = b->head.size + buddy->head.size;
+        increase = true;
+        if(buddy < b) {
+            b = buddy;
+        }
+
+    }
+
+    return b;
+}
+
 
 void findFreeBlock(block *newBlock, struct list *tempList, bool found, size_t asize) {
     struct list_elem *elem = &newBlock->element;
@@ -464,7 +515,8 @@ block* findBuddy(block* bp){
   int buddy = (int) bp ^ bp->head.size;
   block *b = (block *) buddy;
 
-  if((char *)b-1 > (char *)mem_heap_hi() || (char *)b-1 < (char *)mem_heap_lo())
+
+  if((void *)b > mem_heap_hi() || (void *)b < mem_heap_lo())
     return NULL;
 
   if (bp->head.size == b->head.size) return b;
@@ -503,7 +555,7 @@ static void coalesce(block *b)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    size_t oldsize;
+    //size_t oldsize;
     block *newptr;
 
     /* If size == 0 then this is just free, and we return NULL. */
@@ -519,21 +571,34 @@ void *mm_realloc(void *ptr, size_t size)
 
     newptr = mm_malloc(size);
 
+
     /* If realloc() fails the original block is left untouched  */
     if(!newptr) {
 	return 0;
     }
 
     /* Copy the old data. */
-    block *b = blockHeader(ptr);
-    oldsize = b->head.size;
-    if(size < oldsize) oldsize = size;
-    memcpy(newptr, ptr, oldsize- sizeof(block));
+    block *oldB = blockHeader(ptr);
+
+
+
+
+    memmove(newptr, ptr, oldB->head.size-8);
 
     /* Free the old block. */
     mm_free(ptr);
 
     return newptr;
 }
+
+//void* my_memcpy(void* dest, const void* src, size_t num_bytes)
+//{
+//  char *d = (char *) dest;
+//  char *s = (char *) src;
+//  for (int i=0; i<num_bytes; i++) {
+//    d[i]=s[i];
+//  }
+//  return d;
+//}
 
 

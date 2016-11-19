@@ -1,0 +1,75 @@
+{ "version": "1.1",
+ "varysize": 0,
+ "nthreads": 0,
+ "THREAD_SAFE": false,
+ "results": [
+{ "trace": "amptjp-bal.rep"
+, "valid": true
+, "util": 27.906769
+, "ops": 5694.000000
+, "secs": 0.003969
+, "Kops": 1434.675006
+},
+{ "trace": "cccp-bal.rep"
+, "valid": true
+, "util": 23.002790
+, "ops": 5848.000000
+, "secs": 0.002776
+, "Kops": 2106.424505
+},
+{ "trace": "cp-decl-bal.rep"
+, "valid": true
+, "util": 38.896990
+, "ops": 6648.000000
+, "secs": 0.002776
+, "Kops": 2394.466707
+},
+{ "trace": "expr-bal.rep"
+, "valid": true
+, "util": 50.260312
+, "ops": 5380.000000
+, "secs": 0.001490
+, "Kops": 3611.947651
+},
+{ "trace": "coalescing-bal.rep"
+, "valid": true
+, "util": 0.020796
+, "ops": 14400.000000
+, "secs": 0.002027
+, "Kops": 7105.787210
+},
+{ "trace": "random-bal.rep"
+, "valid": true
+, "util": 39.453690
+, "ops": 4800.000000
+, "secs": 0.011820
+, "Kops": 406.100547
+},
+{ "trace": "random2-bal.rep"
+, "valid": true
+, "util": 37.551259
+, "ops": 4800.000000
+, "secs": 0.011834
+, "Kops": 405.609923
+},
+{ "trace": "binary-bal.rep"
+, "valid": true
+, "util": 45.000000
+, "ops": 12000.000000
+, "secs": 0.001391
+, "Kops": 8626.570845
+},
+{ "trace": "binary2-bal.rep"
+, "valid": true
+, "util": 45.000000
+, "ops": 24000.000000
+, "secs": 0.002612
+, "Kops": 9189.311651
+},
+{ "trace": "realloc-bal.rep"
+, "valid": false
+},
+{ "trace": "realloc2-bal.rep"
+, "valid": false
+}]
+}

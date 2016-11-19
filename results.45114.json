@@ -1,0 +1,14 @@
+{ "version": "1.1",
+ "varysize": 0,
+ "nthreads": 0,
+ "THREAD_SAFE": false,
+ "results": [
+{ "trace": "short1-bal.rep"
+, "valid": true
+, "util": 39.765625
+, "ops": 12.000000
+, "secs": 0.000005
+, "Kops": 2306.051463
+}]
+, "perfindex" : { "avg_mm_util": 0.397656, "avg_mm_throughput" : 2306051.463382, "perfindex": 28.149703, "AVG_LIBC_THRUPUT": 21500000.000000 }
+}
